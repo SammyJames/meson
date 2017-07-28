@@ -23,6 +23,7 @@ from .compilers import (
     ClangCompiler,
     GnuCompiler,
     IntelCompiler,
+    CLANG_WIN
 )
 
 class CPPCompiler(CCompiler):
@@ -73,10 +74,15 @@ class ClangCPPCompiler(ClangCompiler, CPPCompiler):
                           '3': default_warn_args + ['-Wextra', '-Wpedantic']}
 
     def get_options(self):
-        return {'cpp_std': coredata.UserComboOption('cpp_std', 'C++ language standard to use',
+        opts = {'cpp_std': coredata.UserComboOption('cpp_std', 'C++ language standard to use',
                                                     ['none', 'c++03', 'c++11', 'c++14', 'c++1z',
                                                      'gnu++11', 'gnu++14', 'gnu++1z'],
                                                     'none')}
+        if self.clang_type == CLANG_WIN:
+            opts.update({
+                'cpp_winlibs': coredata.UserStringArrayOption('cpp_winlibs', 'Standard Win libraries to link against',
+                                                                  gnu_winlibs), })
+        return opts
 
     def get_option_compile_args(self, options):
         args = []
@@ -86,6 +92,8 @@ class ClangCPPCompiler(ClangCompiler, CPPCompiler):
         return args
 
     def get_option_link_args(self, options):
+        if self.clang_type == CLANG_WIN:
+            return options['cpp_winlibs'].value[:]
         return []
 
 

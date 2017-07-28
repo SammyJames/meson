@@ -34,6 +34,7 @@ from .compilers import (
     GnuCompiler,
     IntelCompiler,
     RunResult,
+    CLANG_WIN,
 )
 
 
@@ -722,10 +723,15 @@ class ClangCCompiler(ClangCompiler, CCompiler):
                           '3': default_warn_args + ['-Wextra', '-Wpedantic']}
 
     def get_options(self):
-        return {'c_std': coredata.UserComboOption('c_std', 'C language standard to use',
+        opts = {'c_std': coredata.UserComboOption('c_std', 'C language standard to use',
                                                   ['none', 'c89', 'c99', 'c11',
                                                    'gnu89', 'gnu99', 'gnu11'],
                                                   'none')}
+        if self.clang_type == CLANG_WIN:
+            opts.update({
+                'c_winlibs': coredata.UserStringArrayOption('c_winlibs', 'Standard Win libraries to link against',
+                                                            gnu_winlibs), })
+        return opts
 
     def get_option_compile_args(self, options):
         args = []
@@ -735,6 +741,8 @@ class ClangCCompiler(ClangCompiler, CCompiler):
         return args
 
     def get_option_link_args(self, options):
+        if self.clang_type == CLANG_WIN:
+            return options['c_winlibs'].value[:]
         return []
 
 
@@ -1018,5 +1026,3 @@ class VisualStudioCCompiler(CCompiler):
             # and the can not be called.
             return None
         return vs32_instruction_set_args.get(instruction_set, None)
-
-
