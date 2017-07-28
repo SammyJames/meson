@@ -54,6 +54,9 @@ for _l in clike_langs:
     clike_suffixes += lang_suffixes[_l]
 clike_suffixes += ('h', 'll', 's')
 
+# XXX: Use this in is_library()?
+soregex = re.compile(r'.*\.so(\.[0-9]+)?(\.[0-9]+)?(\.[0-9]+)?$')
+
 # All these are only for C-like languages; see `clike_langs` above.
 
 def sort_clike(lang):
@@ -495,20 +498,24 @@ class CompilerArgs(list):
 
     def to_native(self):
         # Check if we need to add --start/end-group for circular dependencies
-        # between static libraries.
+        # between static libraries, and for recursively searching for symbols
+        # needed by static libraries that are provided by object files or
+        # shared libraries.
         if get_compiler_uses_gnuld(self.compiler):
-            group_started = False
+            global soregex
+            group_start = -1
             for each in self:
-                if not each.startswith('-l') and not each.endswith('.a'):
+                if not each.startswith('-l') and not each.endswith('.a') and \
+                   not soregex.match(each):
                     continue
                 i = self.index(each)
-                if not group_started:
+                if group_start < 0:
                     # First occurance of a library
-                    self.insert(i, '-Wl,--start-group')
-                    group_started = True
-            # Last occurance of a library
-            if group_started:
+                    group_start = i
+            if group_start >= 0:
+                # Last occurance of a library
                 self.insert(i + 1, '-Wl,--end-group')
+                self.insert(group_start, '-Wl,--start-group')
         return self.compiler.unix_args_to_native(self)
 
     def append_direct(self, arg):
@@ -586,6 +593,10 @@ class CompilerArgs(list):
         self.__iadd__(args)
 
 class Compiler:
+    # Libraries to ignore in find_library() since they are provided by the
+    # compiler or the C library. Currently only used for MSVC.
+    ignore_libs = ()
+
     def __init__(self, exelist, version):
         if isinstance(exelist, str):
             self.exelist = [exelist]
@@ -798,8 +809,8 @@ class Compiler:
     def get_instruction_set_args(self, instruction_set):
         return None
 
-    def build_unix_rpath_args(self, build_dir, from_dir, rpath_paths, install_rpath):
-        if not rpath_paths and not install_rpath:
+    def build_unix_rpath_args(self, build_dir, from_dir, rpath_paths, build_rpath, install_rpath):
+        if not rpath_paths and not install_rpath and not build_rpath:
             return []
         # The rpaths we write must be relative, because otherwise
         # they have different length depending on the build
@@ -812,6 +823,9 @@ class Compiler:
                 relative = os.path.relpath(os.path.join(build_dir, p), os.path.join(build_dir, from_dir))
             rel_rpaths.append(relative)
         paths = ':'.join([os.path.join('$ORIGIN', p) for p in rel_rpaths])
+        # Build_rpath is used as-is (it is usually absolute).
+        if build_rpath != '':
+            paths += ':' + build_rpath
         if len(paths) < len(install_rpath):
             padding = 'X' * (len(install_rpath) - len(paths))
             if not paths:
@@ -954,8 +968,6 @@ class GnuCompiler:
         return get_gcc_soname_args(self.gcc_type, prefix, shlib_name, suffix, path, soversion, is_shared_module)
 
     def get_std_shared_lib_link_args(self):
-        if self.gcc_type == GCC_OSX:
-            return ['-bundle']
         return ['-shared']
 
     def get_link_whole_for(self, args):

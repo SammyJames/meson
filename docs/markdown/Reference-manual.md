@@ -243,11 +243,13 @@ Executable supports the following keyword arguments. Note that just like the pos
 - `extra_files` are not used for the build itself but are shown as source files in IDEs that group files by targets (such as Visual Studio)
 - `install`, when set to true, this executable should be installed
 - `install_rpath` a string to set the target's rpath to after install (but *not* before that)
+- `build_rpath` a string to add to target's rpath definition in the build dir, but which will be removed on install
 - `install_dir` override install directory for this file. The value is relative to the `prefix` specified. F.ex, if you want to install plugins into a subdir, you'd use something like this: `install_dir : get_option('libdir') + '/projectname-1.0'`.
 - `objects` list of prebuilt object files (usually for third party products you don't have source to) that should be linked in this target, **never** use this for object files that you build yourself.
 - `name_suffix` the string that will be used as the extension for the target by overriding the default. By default on Windows this is `exe` and on other platforms it is omitted.
 - `build_by_default` causes, when set to true, to have this target be built by default, that is, when invoking plain `ninja`, the default value is true for all built target types, since 0.38.0
 - `override_options` takes an array of strings in the same format as `project`'s `default_options` overriding the values of these options for this target only, since 0.40.0
+- `implib` when set to true, an import library is generated for the executable (the name of the import library is based on *exe_name*).  Alternatively, when set to a string, that gives the base name for the import library.  The import library is used when the returned build target object appears in `link_with:` elsewhere.  Only has any effect on platforms where that is meaningful (e.g. Windows).  Since 0.42.0
 
 The list of `sources`, `objects`, and `dependencies` is always flattened, which means you can freely nest and add lists while creating the final list. As a corollary, the best way to handle a 'disabled dependency' is by assigning an empty list `[]` to it and passing it like any other dependency to the `dependencies:` keyword argument.
 
@@ -631,13 +633,15 @@ Takes the project specified in the positional argument and brings that in the cu
  - `version` keyword argument that works just like the one in `dependency`. It specifies what version the subproject should be, as an example `>=1.0.1`
  - `default_options`, *(added 0.37.0)* an array of default option values that override those set in the project's `default_options` invocation (like `default_options` in `project`, they only have effect when Meson is run for the first time, and command line arguments override any default options in build files)
 
+Note that you can use the returned [subproject object](#subproject-object) to access any variable in the subproject. However, if you want to use a dependency object from inside a subproject, an easier way is to use the `fallback:` keyword argument to [`dependency()`](#dependency).
+
 ### test()
 
 ``` meson
     void test(name, executable, ...)
 ```
 
-Defines an unit test. Takes two positional arguments, the first is the name of this test and the second is the executable to run. Keyword arguments are the following.
+Defines a unit test. Takes two positional arguments, the first is the name of this test and the second is the executable to run. Keyword arguments are the following.
 
 - `args` arguments to pass to the executable
 - `env` environment variables to set, such as `['NAME1=value1', 'NAME2=value2']`, or an [`environment()` object](#environment-object) which allows more sophisticated environment juggling
@@ -674,7 +678,7 @@ The `meson` object allows you to introspect various properties of the system. Th
 
 - `get_compiler(language)` returns [an object describing a compiler](#compiler-object), takes one positional argument which is the language to use. It also accepts one keyword argument, `native` which when set to true makes Meson return the compiler for the build machine (the "native" compiler) and when false it returns the host compiler (the "cross" compiler). If `native` is omitted, Meson returns the "cross" compiler if we're currently cross-compiling and the "native" compiler if we're not.
 
-- `backend()` *(added 0.37.0)* returns a string representing the current backend: `ninja`, `vs2010`, `vs2015`, or `xcode`.
+- `backend()` *(added 0.37.0)* returns a string representing the current backend: `ninja`, `vs2010`, `vs2015`, `vs2017`, or `xcode`.
 
 - `is_cross_build()` returns `true` if the current build is a [cross build](Cross-compilation.md) and `false` otherwise.
 
@@ -716,10 +720,10 @@ Provides information about the build machine — the machine that is doing the a
 
 - `cpu_family()` returns the CPU family name. Guaranteed to return `x86` for 32-bit userland on x86 CPUs, `x86_64` for 64-bit userland on x86 CPUs, `arm` for 32-bit userland on all ARM CPUs, etc.
 - `cpu()` returns a more specific CPU name, such as `i686`, `amd64`, etc.
-- `system()` returns the operating system name, such as `windows` (all versions of Windows), `linux` (all Linux distros), `darwin` (all versions of OS X), etc.
+- `system()` returns the operating system name, such as `windows` (all versions of Windows), `linux` (all Linux distros), `darwin` (all versions of OS X/macOS), `cygwin` (for Cygwin), and `bsd` (all *BSD OSes).
 - `endian()` returns `big` on big-endian systems and `little` on little-endian systems.
 
-Currently, these values are populated using the [`platform.system()`](https://docs.python.org/3.4/library/platform.html#platform.system) and [`platform.machine()`](https://docs.python.org/3.4/library/platform.html#platform.machine). If you think the returned values for any of these are incorrect for your system or CPU, please file [a bug report](https://github.com/mesonbuild/meson/issues/new).
+Currently, these values are populated using [`platform.system()`](https://docs.python.org/3.4/library/platform.html#platform.system) and [`platform.machine()`](https://docs.python.org/3.4/library/platform.html#platform.machine). If you think the returned values for any of these are incorrect for your system or CPU, or if your OS is not in the above list, please file [a bug report](https://github.com/mesonbuild/meson/issues/new) with details and we'll look into it.
 
 ### `host_machine` object
 
@@ -745,7 +749,7 @@ Note that while cross-compiling, it simply returns the values defined in the cro
 
 This object is returned by [`meson.get_compiler(lang)`](#meson-object). It represents a compiler for a given language and allows you to query its properties. It has the following methods:
 
-- `get_id()` returns a string identifying the compiler (e.g. `'gcc'`).
+- `get_id()` returns a string identifying the compiler. For example, `gcc`, `msvc`, [and more](Compiler-properties.md#compiler-id).
 - `version()` returns the compiler's version number as a string.
 - `find_library(lib_name, ...)` tries to find the library specified in the positional argument. The [result object](#external-library-object) can be used just like the return value of `dependency`. If the keyword argument `required` is false, Meson will proceed even if the library is not found. By default the library is searched for in the system library directory (e.g. /usr/lib). This can be overridden with the `dirs` keyword argument, which can be either a string or a list of strings.
 - `sizeof(typename, ...)` returns the size of the given type (e.g. `'int'`) or -1 if the type is unknown, to add includes set them in the `prefix` keyword argument, you can specify external dependencies to use with `dependencies` keyword argument.

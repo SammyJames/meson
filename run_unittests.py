@@ -1431,6 +1431,23 @@ class WindowsTests(BasePlatformTests):
         self.assertPathEqual(prog.get_command()[0], sys.executable)
         self.assertPathBasenameEqual(prog.get_path(), 'test-script-ext.py')
 
+    def test_ignore_libs(self):
+        '''
+        Test that find_library on libs that are to be ignored returns an empty
+        array of arguments. Must be a unit test because we cannot inspect
+        ExternalLibraryHolder from build files.
+        '''
+        testdir = os.path.join(self.platform_test_dir, '1 basic')
+        env = Environment(testdir, self.builddir, self.meson_command,
+                          get_fake_options(self.prefix), [])
+        cc = env.detect_c_compiler(False)
+        if cc.id != 'msvc':
+            raise unittest.SkipTest('Not using MSVC')
+        # To force people to update this test, and also test
+        self.assertEqual(set(cc.ignore_libs), {'c', 'm', 'pthread'})
+        for l in cc.ignore_libs:
+            self.assertEqual(cc.find_library(l, env, []), [])
+
 
 class LinuxlikeTests(BasePlatformTests):
     '''
@@ -1827,6 +1844,46 @@ class LinuxlikeTests(BasePlatformTests):
                         self.assertLess(line.index(first), line.index(second))
                     return
         raise RuntimeError('Linker entries not found in the Ninja file.')
+
+    def test_introspect_dependencies(self):
+        '''
+        Tests that mesonintrospect --dependencies returns expected output.
+        '''
+        testdir = os.path.join(self.framework_test_dir, '7 gnome')
+        self.init(testdir)
+        glib_found = False
+        gobject_found = False
+        deps = self.introspect('--dependencies')
+        self.assertIsInstance(deps, list)
+        for dep in deps:
+            self.assertIsInstance(dep, dict)
+            self.assertIn('name', dep)
+            self.assertIn('compile_args', dep)
+            self.assertIn('link_args', dep)
+            if dep['name'] == 'glib-2.0':
+                glib_found = True
+            elif dep['name'] == 'gobject-2.0':
+                gobject_found = True
+        self.assertTrue(glib_found)
+        self.assertTrue(gobject_found)
+
+    def test_build_rpath(self):
+        testdir = os.path.join(self.unit_test_dir, '11 build_rpath')
+        self.init(testdir)
+        self.build()
+        build_rpath = get_rpath(os.path.join(self.builddir, 'prog'))
+        self.assertEqual(build_rpath, '$ORIGIN/sub:/foo/bar')
+        self.install()
+        install_rpath = get_rpath(os.path.join(self.installdir, 'usr/bin/prog'))
+        self.assertEqual(install_rpath, '/baz')
+
+    def test_pch_with_address_sanitizer(self):
+        testdir = os.path.join(self.common_test_dir, '13 pch')
+        self.init(testdir, ['-Db_sanitize=address'])
+        self.build()
+        compdb = self.get_compdb()
+        for i in compdb:
+            self.assertIn("-fsanitize=address", i["command"])
 
 class LinuxArmCrossCompileTests(BasePlatformTests):
     '''
